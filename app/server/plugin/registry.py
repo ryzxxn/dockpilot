@@ -1,24 +1,30 @@
-from typing import Dict
-from plugin.base import ButtonPlugin
+# plugin/registry.py
+from typing import Dict, List, Any, Optional # Added Optional
+from .base import ButtonPlugin
 
-# Global registry
-_REGISTRY: Dict[str, ButtonPlugin] = {}
+class PluginRegistry:
+    def __init__(self):
+        self._plugins: Dict[str, ButtonPlugin] = {}
 
+    def register(self, plugin: ButtonPlugin):
+        print(f"✅ Registering plugin: {plugin.type}")
+        self._plugins[plugin.type] = plugin
 
-def register(plugin: ButtonPlugin) -> None:
-    """Register a plugin in the global registry."""
-    if plugin.type in _REGISTRY:
-        raise RuntimeError(f"Button already registered: {plugin.type}")
-    _REGISTRY[plugin.type] = plugin
+    # Change hint to Optional[ButtonPlugin] because it might return None
+    def get_plugin(self, plugin_type: str) -> Optional[ButtonPlugin]:
+        return self._plugins.get(plugin_type)
 
+    def list_types(self) -> List[str]:
+        return list(self._plugins.keys())
 
-def get(type_: str) -> ButtonPlugin:
-    """Retrieve a registered plugin by its type."""
-    if type_ not in _REGISTRY:
-        raise KeyError(f"Unknown button type: {type_}")
-    return _REGISTRY[type_]
+    def list_types_with_schemas(self) -> List[Dict[str, Any]]:
+        return [
+            {"type": p.type, "schema": p.get_schema()} 
+            for p in self._plugins.values()
+        ]
 
+# Create the singleton instance
+registry = PluginRegistry()
 
-def list_types() -> list[str]:
-    """Return a list of all registered plugin types."""
-    return list(_REGISTRY.keys())
+# Export the register function
+register = registry.register

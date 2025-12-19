@@ -1,25 +1,21 @@
+# plugin/base.py
+from typing import Any, Dict, List
 from abc import ABC, abstractmethod
-from typing import Any, Dict
-
 
 class ButtonPlugin(ABC):
-    """
-    Base class for all button plugins.
-    """
-
-    type: str  # unique identifier, e.g. "trigger_api"
-
+    @property
     @abstractmethod
-    def validate_config(self, config: Dict[str, Any]) -> None:
-        """Raise ValueError if config is invalid"""
+    def type(self) -> str:
         pass
 
     @abstractmethod
-    def schema(self) -> Dict[str, Any]:
-        """Return frontend-editable schema"""
+    def get_schema(self) -> List[Dict[str, Any]]:
+        pass
+
+    @abstractmethod
+    def validate_config(self, config: Dict[str, Any]) -> None:
         pass
 
     @abstractmethod
     def execute(self, config: Dict[str, Any]) -> Any:
-        """Execute the button action"""
         pass
