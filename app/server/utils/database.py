@@ -1,3 +1,4 @@
+# utils/database.py
 import sqlite3
 from pathlib import Path
 from typing import Any, Dict, List
@@ -9,17 +10,14 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
 DB_PATH = DATA_DIR / "dockpilot.db"
 
-
 def generate_id() -> str:
     return str(uuid.uuid4())
-
 
 def get_connection() -> sqlite3.Connection:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
-
 
 def init_db() -> None:
     conn = get_connection()
@@ -33,12 +31,14 @@ def init_db() -> None:
     )
     """)
 
+    # ✅ UPDATED: Added 'icon' column definition
     cur.execute("""
     CREATE TABLE IF NOT EXISTS buttons (
         button_id TEXT PRIMARY KEY,
         profile_id TEXT NOT NULL,
         type TEXT NOT NULL,
         label TEXT NOT NULL,
+        icon TEXT,
         config TEXT NOT NULL,
         created_at TEXT NOT NULL,
         FOREIGN KEY(profile_id) REFERENCES profiles(id)
@@ -47,7 +47,6 @@ def init_db() -> None:
 
     conn.commit()
     conn.close()
-
 
 def ensure_default_profile() -> Dict[str, Any]:
     conn = get_connection()
@@ -79,13 +78,11 @@ def ensure_default_profile() -> Dict[str, Any]:
     conn.close()
     return profile
 
-
 def execute(query: str, params: tuple = ()) -> None:
     conn = get_connection()
     conn.execute(query, params)
     conn.commit()
     conn.close()
-
 
 def fetch_all(query: str, params: tuple = ()) -> List[Dict[str, Any]]:
     conn = get_connection()
@@ -93,7 +90,6 @@ def fetch_all(query: str, params: tuple = ()) -> List[Dict[str, Any]]:
     rows = [dict(r) for r in cur.fetchall()]
     conn.close()
     return rows
-
 
 def fetch_one(query: str, params: tuple = ()) -> Dict[str, Any] | None:
     conn = get_connection()

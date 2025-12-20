@@ -62,10 +62,20 @@ async def update_button_config(button_id: str, payload: Dict[str, Any]):
 
     return {"status": "ok"}
 
-# ✅ NEW ROUTE: Reset Config
+# # ✅ NEW ROUTE: Reset Config
+# @router.delete("/{button_id}/config")
+# async def reset_button_config(button_id: str):
+#     """Clear the configuration for a button."""
+#     execute(
+#         "UPDATE buttons SET config = '{}' WHERE button_id = ?",
+#         (button_id,),
+#     )
+#     return {"status": "cleared"}
+
 @router.delete("/{button_id}/config")
 async def reset_button_config(button_id: str):
     """Clear the configuration for a button."""
+    # This only touches 'config', preserving 'label' and 'icon'
     execute(
         "UPDATE buttons SET config = '{}' WHERE button_id = ?",
         (button_id,),

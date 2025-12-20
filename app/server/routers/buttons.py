@@ -2,12 +2,19 @@
 from fastapi import APIRouter, HTTPException # type: ignore
 from pydantic import BaseModel # type: ignore
 from datetime import datetime
+from typing import Optional
+from pathlib import Path
 import json
 
 from utils.database import fetch_all, fetch_one, execute, generate_id
 from plugin.registry import registry
 
 router = APIRouter()
+
+# Define Path to Icons (Relative to this file)
+# Assuming routers/buttons.py -> parent is backend root
+BASE_DIR = Path(__file__).resolve().parent.parent
+ICONS_DIR = BASE_DIR / "icons"
 
 # --- Models ---
 class ButtonCreate(BaseModel):
@@ -16,9 +23,27 @@ class ButtonCreate(BaseModel):
     type: str
 
 class ButtonUpdate(BaseModel):
-    label: str
+    label: Optional[str] = None
+    icon: Optional[str] = None # ✅ NEW FIELD
 
 # --- Routes ---
+
+# ✅ NEW: Endpoint to list available icon filenames
+@router.get("/assets/icons")
+def list_available_icons():
+    """Scans the /icons directory and returns valid image filenames."""
+    if not ICONS_DIR.exists():
+        return {"icons": []}
+    
+    valid_extensions = {".png", ".jpg", ".jpeg", ".svg", ".webp", ".gif"}
+    
+    icons = [
+        f.name for f in ICONS_DIR.iterdir() 
+        if f.is_file() and f.suffix.lower() in valid_extensions
+    ]
+    
+    return {"icons": sorted(icons)}
+
 
 @router.get("/button-types")
 def get_button_types():
@@ -37,16 +62,18 @@ def list_buttons(profile_id: str):
 @router.post("/")
 def create_button(data: ButtonCreate):
     button_id = generate_id()
+    # Updated INSERT to include NULL icon
     execute(
         """
-        INSERT INTO buttons (button_id, profile_id, type, label, config, created_at)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO buttons (button_id, profile_id, type, label, icon, config, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
         (
             button_id,
             data.profile_id,
             data.type,
             data.label,
+            None, # Default icon is NULL
             json.dumps({}),
             datetime.utcnow().isoformat(),
         ),
@@ -54,20 +81,36 @@ def create_button(data: ButtonCreate):
     return {"button_id": button_id}
 
 
-# ✅ NEW: Rename Button
+# ✅ UPDATED: Rename/Update Button (Supports Label & Icon)
 @router.patch("/{button_id}")
-def update_button_label(button_id: str, data: ButtonUpdate):
-    execute(
-        "UPDATE buttons SET label = ? WHERE button_id = ?",
-        (data.label, button_id),
-    )
-    return {"status": "updated", "label": data.label}
+def update_button_details(button_id: str, data: ButtonUpdate):
+    # Dynamically build the update query
+    fields = []
+    values = []
+
+    if data.label is not None:
+        fields.append("label = ?")
+        values.append(data.label)
+    
+    if data.icon is not None:
+        fields.append("icon = ?")
+        values.append(data.icon)
+
+    if not fields:
+        return {"status": "no_change", "message": "No fields provided"}
+
+    values.append(button_id)
+    query = f"UPDATE buttons SET {', '.join(fields)} WHERE button_id = ?"
+
+    try:
+        execute(query, tuple(values))
+        return {"status": "updated", "updated_fields": fields}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
-# ✅ NEW: Delete Button
 @router.delete("/{button_id}")
 def delete_button(button_id: str):
-    # Check if exists first
     button = fetch_one("SELECT button_id FROM buttons WHERE button_id = ?", (button_id,))
     if not button:
         raise HTTPException(status_code=404, detail="Button not found")
@@ -78,17 +121,14 @@ def delete_button(button_id: str):
 
 @router.post("/{button_id}/trigger")
 async def trigger_button(button_id: str):
-    # 1. Get button
     button = fetch_one("SELECT * FROM buttons WHERE button_id = ?", (button_id,))
     if not button: 
         raise HTTPException(status_code=404, detail="Button not found")
     
-    # 2. Get plugin
     plugin = registry.get_plugin(button["type"])
     if not plugin: 
         raise HTTPException(status_code=400, detail=f"Plugin type '{button['type']}' not loaded")
     
-    # 3. Execute
     try:
         config = json.loads(button["config"]) if button["config"] else {}
         result = plugin.execute(config)
