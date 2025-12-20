@@ -6,6 +6,8 @@ export type Profile = {
 };
 
 export interface Button {
+  [x: string]: any;
+  icon: any;
   button_id: string;
   profile_id: string;
   type: string;
