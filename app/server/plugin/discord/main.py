@@ -33,7 +33,7 @@ class DiscordManager:
             cls._instance.client = None
             cls._instance.client_id = None
             cls._instance.client_secret = None
-            cls._instance.lock = asyncio.Lock() 
+            cls._instance.lock = asyncio.Lock()  # pyright: ignore[reportAttributeAccessIssue]
         return cls._instance
 
     async def get_connected_client(self, client_id: str, client_secret: str):
@@ -52,7 +52,7 @@ class DiscordManager:
         try:
             self.client_id = client_id
             self.client_secret = client_secret
-            self.client = AioClient(client_id)
+            self.client = AioClient(client_id) # pyright: ignore[reportOptionalCall]
             
             await self.client.start()
             await self._authenticate()
@@ -105,7 +105,7 @@ class DiscordManager:
         # 2. Re-use token
         if access_token:
             try:
-                await self.client.authenticate(access_token)
+                await self.client.authenticate(access_token) # type: ignore
                 return
             except Exception:
                 print("Saved token invalid/expired, re-authorizing...")
@@ -116,7 +116,7 @@ class DiscordManager:
 
         print("Waiting for user to click Authorize in Discord...")
         # This returns a CODE, not a token
-        code_response = await self.client.authorize(self.client_id, scopes)
+        code_response = await self.client.authorize(self.client_id, scopes) # type: ignore
         
         if 'data' not in code_response or 'code' not in code_response['data']:
              raise ValueError(f"Auth failed. Response: {code_response}")
@@ -146,7 +146,7 @@ class DiscordManager:
             new_token = token_data['access_token']
         
         # 5. Authenticate & Save
-        await self.client.authenticate(new_token)
+        await self.client.authenticate(new_token) # type: ignore
 
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         with open(TOKEN_FILE, "w") as f:
@@ -179,9 +179,9 @@ class DiscordControlPlugin(ButtonPlugin):
         manager = DiscordManager()
 
         # ✅ CRITICAL: Use the lock to ensure only ONE request happens at a time
-        async with manager.lock:
+        async with manager.lock: # type: ignore
             try:
-                rpc = await manager.get_connected_client(client_id, client_secret)
+                rpc = await manager.get_connected_client(client_id, client_secret) # type: ignore
                 
                 # Retry logic for broken pipes
                 try:
@@ -189,7 +189,7 @@ class DiscordControlPlugin(ButtonPlugin):
                 except Exception:
                     print("Pipe broken, reconnecting...")
                     await manager._reset_connection()
-                    rpc = await manager.get_connected_client(client_id, client_secret)
+                    rpc = await manager.get_connected_client(client_id, client_secret) # type: ignore
                     settings = await rpc.get_voice_settings()
 
                 if not settings or 'data' not in settings:
