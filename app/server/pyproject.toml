@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.124.4",
+    "httpx>=0.28.1",
     "pyautogui>=0.9.54",
     "pydantic>=2.12.5",
     "pypresence>=4.6.1",

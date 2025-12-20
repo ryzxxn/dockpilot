@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Optional
 from pathlib import Path
 import json
+import inspect  # ✅ REQUIRED for detecting async plugins
 
 from utils.database import fetch_all, fetch_one, execute, generate_id
 from plugin.registry import registry
@@ -12,7 +13,6 @@ from plugin.registry import registry
 router = APIRouter()
 
 # Define Path to Icons (Relative to this file)
-# Assuming routers/buttons.py -> parent is backend root
 BASE_DIR = Path(__file__).resolve().parent.parent
 ICONS_DIR = BASE_DIR / "icons"
 
@@ -24,11 +24,10 @@ class ButtonCreate(BaseModel):
 
 class ButtonUpdate(BaseModel):
     label: Optional[str] = None
-    icon: Optional[str] = None # ✅ NEW FIELD
+    icon: Optional[str] = None
 
 # --- Routes ---
 
-# ✅ NEW: Endpoint to list available icon filenames
 @router.get("/assets/icons")
 def list_available_icons():
     """Scans the /icons directory and returns valid image filenames."""
@@ -62,7 +61,6 @@ def list_buttons(profile_id: str):
 @router.post("/")
 def create_button(data: ButtonCreate):
     button_id = generate_id()
-    # Updated INSERT to include NULL icon
     execute(
         """
         INSERT INTO buttons (button_id, profile_id, type, label, icon, config, created_at)
@@ -81,7 +79,6 @@ def create_button(data: ButtonCreate):
     return {"button_id": button_id}
 
 
-# ✅ UPDATED: Rename/Update Button (Supports Label & Icon)
 @router.patch("/{button_id}")
 def update_button_details(button_id: str, data: ButtonUpdate):
     # Dynamically build the update query
@@ -119,19 +116,30 @@ def delete_button(button_id: str):
     return {"status": "deleted"}
 
 
+# ✅ UPDATED: Handles both Async and Sync plugins
 @router.post("/{button_id}/trigger")
 async def trigger_button(button_id: str):
+    # 1. Get button
     button = fetch_one("SELECT * FROM buttons WHERE button_id = ?", (button_id,))
     if not button: 
         raise HTTPException(status_code=404, detail="Button not found")
     
+    # 2. Get plugin
     plugin = registry.get_plugin(button["type"])
     if not plugin: 
         raise HTTPException(status_code=400, detail=f"Plugin type '{button['type']}' not loaded")
     
+    # 3. Execute
     try:
         config = json.loads(button["config"]) if button["config"] else {}
-        result = plugin.execute(config)
+        
+        # Check if the execute method is an async coroutine
+        if inspect.iscoroutinefunction(plugin.execute):
+            result = await plugin.execute(config) # ✅ Await async plugins (Discord)
+        else:
+            result = plugin.execute(config)       # ✅ Call sync plugins directly (App Launcher)
+            
         return {"status": "success", "result": result}
     except Exception as e:
+        print(f"Trigger Error: {e}") # Log to console
         raise HTTPException(status_code=500, detail=str(e))

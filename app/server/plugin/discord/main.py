@@ -1,30 +1,29 @@
 import json
 import os
-import time
+import asyncio
+import httpx # type: ignore # ✅ Required for token exchange
 from typing import Any, Dict, List
 from pathlib import Path
 
-# Third-party library
+# Try to import AioClient (Async)
 try:
-    from pypresence import Client
+    from pypresence import AioClient # type: ignore
 except ImportError:
-    Client = None
+    AioClient = None
 
 from plugin.base import ButtonPlugin
 from plugin.registry import register
+# Ensure this matches your config file name
 from .config import SCHEMA
 
-# --- PERSISTENCE HELPERS ---
-# We need to save the saved Auth Token so the user doesn't have to 
-# click "Authorize" in Discord every time the server restarts.
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 DATA_DIR = BASE_DIR / "data"
 TOKEN_FILE = DATA_DIR / "discord_token.json"
 
 class DiscordManager:
     """
-    Singleton class to keep the Discord RPC connection alive.
-    Re-connecting on every button press is too slow.
+    Singleton to manage the Discord RPC connection.
+    Handles Auth Code Exchange and Async Locking.
     """
     _instance = None
 
@@ -33,37 +32,64 @@ class DiscordManager:
             cls._instance = super(DiscordManager, cls).__new__(cls)
             cls._instance.client = None
             cls._instance.client_id = None
-            cls._instance.connected = False
+            cls._instance.client_secret = None
+            cls._instance.lock = asyncio.Lock() 
         return cls._instance
 
-    def connect(self, client_id: str):
-        # If we are already connected with the same ID, do nothing
-        if self.connected and self.client and self.client_id == client_id:
+    async def get_connected_client(self, client_id: str, client_secret: str):
+        """
+        Returns an authenticated Discord Client.
+        """
+        # Reset if credentials changed
+        if self.client and (self.client_id != client_id):
+            print("Credentials changed, resetting connection...")
+            await self._reset_connection()
+
+        if self.client:
             return self.client
 
+        print(f"Connecting to Discord RPC (ID: {client_id})...")
         try:
-            # Initialize Client
             self.client_id = client_id
-            self.client = Client(client_id)
-            self.client.start()
-            self.connected = True
+            self.client_secret = client_secret
+            self.client = AioClient(client_id)
             
-            # Authenticate / Authorize
-            self._authenticate()
+            await self.client.start()
+            await self._authenticate()
             
+            print("✅ Discord Connected")
             return self.client
+
         except Exception as e:
-            print(f"Discord Connection Error: {e}")
-            self.connected = False
-            self.client = None
+            print(f"❌ Connection Failed: {e}")
+            await self._reset_connection()
             raise e
 
-    def _authenticate(self):
+    async def _reset_connection(self):
         """
-        Handles the OAuth2 flow via RPC.
-        Discord App will pop up asking for permission on first run.
+        Safely clears the client without killing the FastAPI Event Loop.
         """
-        # 1. Load existing token if available
+        if self.client:
+            try:
+                # ⚠️ Do NOT call self.client.close() directly.
+                # It tries to close the main event loop, crashing FastAPI.
+                
+                # Manually close the socket writer if it exists
+                if hasattr(self.client, 'sock_writer') and self.client.sock_writer:
+                    self.client.sock_writer.close()
+            except Exception as e:
+                print(f"Warning during close: {e}")
+        
+        self.client = None
+
+    async def _authenticate(self):
+        """
+        Handles OAuth2 Token Logic:
+        1. Checks saved token.
+        2. If invalid, asks Discord for a Code.
+        3. Exchanges Code + Secret for a new Token.
+        """
+        # 1. Try saved token
         access_token = None
         if TOKEN_FILE.exists():
             try:
@@ -71,39 +97,70 @@ class DiscordManager:
                     data = json.load(f)
                     if data.get("client_id") == self.client_id:
                         access_token = data.get("access_token")
-            except:
+            except Exception:
                 pass
 
-        # 2. Authorize
-        # rpc.voice.write is required to mute/deafen
         scopes = ['rpc', 'rpc.voice.write', 'rpc.voice.read']
         
+        # 2. Re-use token
         if access_token:
             try:
-                # Try to use existing token
-                self.client.authenticate(access_token)
+                await self.client.authenticate(access_token)
                 return
             except Exception:
-                print("Saved token invalid, re-authorizing...")
+                print("Saved token invalid/expired, re-authorizing...")
 
-        # 3. New Authorization (Pop up in Discord)
-        # This returns a code, which pypresence automatically exchanges for a token
-        auth_data = self.client.authorize(self.client_id, scopes)
-        new_token = auth_data['data']['access_token']
+        # 3. Request Authorization Code
+        if not self.client_secret:
+            raise ValueError("Client Secret is required for initial authorization!")
+
+        print("Waiting for user to click Authorize in Discord...")
+        # This returns a CODE, not a token
+        code_response = await self.client.authorize(self.client_id, scopes)
         
-        # 4. Authenticate with new token
-        self.client.authenticate(new_token)
+        if 'data' not in code_response or 'code' not in code_response['data']:
+             raise ValueError(f"Auth failed. Response: {code_response}")
+             
+        auth_code = code_response['data']['code']
+        
+        # 4. Exchange Code for Token (The missing step)
+        print("Exchanging code for access token...")
+        async with httpx.AsyncClient() as http:
+            # Note: redirect_uri must match what you set in Discord Dev Portal
+            resp = await http.post(
+                "https://discord.com/api/oauth2/token",
+                data={
+                    "grant_type": "authorization_code",
+                    "code": auth_code,
+                    "redirect_uri": "http://localhost",
+                    "client_id": self.client_id,
+                    "client_secret": self.client_secret
+                },
+                headers={"Content-Type": "application/x-www-form-urlencoded"}
+            )
+            
+            if resp.status_code != 200:
+                raise ValueError(f"Token exchange failed: {resp.text}")
+            
+            token_data = resp.json()
+            new_token = token_data['access_token']
+        
+        # 5. Authenticate & Save
+        await self.client.authenticate(new_token)
 
-        # 5. Save token
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         with open(TOKEN_FILE, "w") as f:
-            json.dump({"client_id": self.client_id, "access_token": new_token}, f)
+            json.dump({
+                "client_id": self.client_id, 
+                "access_token": new_token,
+                "refresh_token": token_data.get('refresh_token')
+            }, f)
 
 
 class DiscordControlPlugin(ButtonPlugin):
     @property
     def type(self) -> str:
-        return "discord"
+        return "discord_control"
 
     def get_schema(self) -> List[Dict[str, Any]]:
         return SCHEMA
@@ -111,72 +168,61 @@ class DiscordControlPlugin(ButtonPlugin):
     def validate_config(self, config: Dict[str, Any]) -> None:
         if not config.get("client_id"):
             raise ValueError("Client ID is required")
-        if not Client:
-            raise ImportError("pypresence is not installed. Run 'uv add pypresence'")
+        if not AioClient:
+            raise ImportError("pypresence is not installed.")
 
-    def execute(self, config: Dict[str, Any]) -> Any:
+    async def execute(self, config: Dict[str, Any]) -> Any:
         client_id = config.get("client_id")
+        client_secret = config.get("client_secret", "").strip()
         action = config.get("action", "Toggle Mute")
         
         manager = DiscordManager()
 
-        try:
-            # 1. Get or Create Connection
-            rpc = manager.connect(client_id)
-            
-            # 2. Get Current Voice State
-            # We need this to toggle, or to know if we are even in a channel
-            # get_voice_settings() returns the local mute state
-            settings = rpc.get_voice_settings()
-            
-            if not settings:
-                return {"error": "Could not fetch Discord settings. Is Discord running?"}
-            
-            data = settings.get('data', {})
-            current_mute = data.get('mute', False)
-            current_deaf = data.get('deaf', False)
-
-            # 3. Determine New State
-            new_mute = current_mute
-            new_deaf = current_deaf
-
-            if action == "Toggle Mute":
-                new_mute = not current_mute
-                # If we unmute, we usually want to undeafen too, handled by Discord logic usually
-                if new_mute: new_deaf = False 
-            
-            elif action == "Toggle Deafen":
-                new_deaf = not current_deaf
-                # Deafening automatically mutes in Discord
-                if new_deaf: new_mute = True
+        # ✅ CRITICAL: Use the lock to ensure only ONE request happens at a time
+        async with manager.lock:
+            try:
+                rpc = await manager.get_connected_client(client_id, client_secret)
                 
-            elif action == "Mute On": new_mute = True
-            elif action == "Mute Off": new_mute = False
-            elif action == "Deafen On": 
-                new_deaf = True
-                new_mute = True
-            elif action == "Deafen Off": 
-                new_deaf = False
-                # Optionally unmute too, or keep mute? Usually Deafen Off implies Unmute
-                new_mute = False 
+                # Retry logic for broken pipes
+                try:
+                    settings = await rpc.get_voice_settings()
+                except Exception:
+                    print("Pipe broken, reconnecting...")
+                    await manager._reset_connection()
+                    rpc = await manager.get_connected_client(client_id, client_secret)
+                    settings = await rpc.get_voice_settings()
 
-            # 4. Apply Settings
-            rpc.set_voice_settings(
-                mute=new_mute,
-                deaf=new_deaf
-            )
+                if not settings or 'data' not in settings:
+                    return {"error": "No voice status. Are you in a channel?"}
+                
+                data = settings['data']
+                current_mute = data.get('mute', False)
+                current_deaf = data.get('deaf', False)
 
-            status_msg = []
-            if new_mute: status_msg.append("Muted")
-            else: status_msg.append("Unmuted")
-            
-            if new_deaf: status_msg.append("Deafened")
-            
-            return {"status": "success", "executed": ", ".join(status_msg)}
+                new_mute = current_mute
+                new_deaf = current_deaf
 
-        except Exception as e:
-            # Reset connection on error
-            manager.connected = False
-            return {"error": str(e)}
+                if action == "Toggle Mute":
+                    new_mute = not current_mute
+                    if new_mute: new_deaf = False 
+                elif action == "Toggle Deafen":
+                    new_deaf = not current_deaf
+                    if new_deaf: new_mute = True
+                elif action == "Mute On": new_mute = True
+                elif action == "Mute Off": new_mute = False
+                elif action == "Deafen On": new_deaf = True; new_mute = True
+                elif action == "Deafen Off": new_deaf = False; new_mute = False 
+
+                await rpc.set_voice_settings(mute=new_mute, deaf=new_deaf)
+                
+                msg = "Muted" if new_mute else "Unmuted"
+                if new_deaf: msg += " & Deafened"
+                
+                return {"status": "success", "executed": msg}
+
+            except Exception as e:
+                # If we fail, clear connection so next try is fresh
+                await manager._reset_connection()
+                return {"error": str(e)}
 
 register(DiscordControlPlugin())
