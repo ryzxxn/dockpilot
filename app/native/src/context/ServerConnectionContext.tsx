@@ -18,7 +18,7 @@ const ServerConnectionContext = createContext<ServerConnectionContextType | unde
 const STORAGE_KEY = '@dockpilot:serverUrl';
 
 export const ServerConnectionProvider = ({ children }: { children: ReactNode }) => {
-  const [serverUrl, setServerUrlState] = useState('http://192.168.1.100:9001');
+  const [serverUrl, setServerUrlState] = useState('http://192.168.0.138:9001');
   const [isConnected, setIsConnected] = useState(false);
   const [isChecking, setIsChecking] = useState(false);
   const [error, setError] = useState<string | null>(null);

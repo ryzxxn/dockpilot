@@ -46,7 +46,7 @@ export default function ConnectionSetupScreen({ onConnectionSuccess }: Connectio
 
   const presetUrls = [
     { label: 'Localhost', url: 'http://localhost:9001' },
-    { label: 'Local Network', url: 'http://192.168.1.100:9001' },
+    { label: 'Local Network', url: 'http://192.168.0.138:9001' },
   ];
 
   return (
@@ -80,7 +80,7 @@ export default function ConnectionSetupScreen({ onConnectionSuccess }: Connectio
             style={[styles.input, error ? styles.inputError : null]}
             value={inputUrl}
             onChangeText={handleInputChange}
-            placeholder="http://192.168.1.100:9001"
+            placeholder="http://192.168.0.138:9001"
             placeholderTextColor="#525252"
             autoCapitalize="none"
             autoCorrect={false}

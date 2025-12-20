@@ -10,6 +10,7 @@ import {
   Alert,
   ActivityIndicator,
   Pressable,
+  useWindowDimensions,
 } from 'react-native';
 import { PluginSchema } from '../types';
 import { apiClient } from '../utils/api';
@@ -29,6 +30,9 @@ export const CreateButtonModal = ({
   profileId,
   pluginSchemas,
 }: CreateButtonModalProps) => {
+  const { width, height } = useWindowDimensions();
+  const isLandscape = width > height;
+
   const [label, setLabel] = useState('');
   const [type, setType] = useState(pluginSchemas[0]?.type || '');
   const [isCreating, setIsCreating] = useState(false);
@@ -68,7 +72,14 @@ export const CreateButtonModal = ({
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <Pressable style={styles.modalOverlay} onPress={onClose}>
-        <Pressable style={styles.modalContent} onPress={(e) => e.stopPropagation()}>
+        <Pressable 
+          style={[
+            styles.modalContent, 
+            isLandscape && styles.modalContentLandscape
+          ]} 
+          onPress={(e) => e.stopPropagation()}
+        >
+          {/* Header */}
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>CREATE NEW BUTTON</Text>
             <TouchableOpacity onPress={onClose} style={styles.closeButton}>
@@ -76,78 +87,88 @@ export const CreateButtonModal = ({
             </TouchableOpacity>
           </View>
 
-          <ScrollView style={styles.modalBody} contentContainerStyle={styles.modalBodyContent}>
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Button Label</Text>
-              <TextInput
-                style={styles.input}
-                value={label}
-                onChangeText={setLabel}
-                placeholder="Enter button name"
-                placeholderTextColor="#525252"
-                autoCapitalize="words"
-              />
-            </View>
+          {/* Body */}
+          <View style={styles.modalBody}>
+            <ScrollView contentContainerStyle={styles.modalBodyContent}>
+              <View style={[
+                styles.formContainer,
+                isLandscape && styles.formContainerLandscape
+              ]}>
+                <View style={styles.inputGroup}>
+                  <Text style={styles.label}>Button Label</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={label}
+                    onChangeText={setLabel}
+                    placeholder="Enter button name"
+                    placeholderTextColor="#525252"
+                    autoCapitalize="words"
+                  />
+                </View>
 
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Button Type</Text>
-              <TouchableOpacity
-                style={styles.selectButton}
-                onPress={() => setShowTypePicker(true)}
-              >
-                <Text style={styles.selectButtonText}>{type || 'Select type'}</Text>
-                <Text style={styles.selectButtonArrow}>▼</Text>
-              </TouchableOpacity>
-
-              {showTypePicker && (
-                <Modal
-                  visible={showTypePicker}
-                  transparent
-                  animationType="fade"
-                  onRequestClose={() => setShowTypePicker(false)}
-                >
-                  <Pressable
-                    style={styles.pickerOverlay}
-                    onPress={() => setShowTypePicker(false)}
+                <View style={styles.inputGroup}>
+                  <Text style={styles.label}>Button Type</Text>
+                  <TouchableOpacity
+                    style={styles.selectButton}
+                    onPress={() => setShowTypePicker(true)}
                   >
-                    <Pressable style={styles.pickerContainer} onPress={(e) => e.stopPropagation()}>
-                      <View style={styles.pickerHeader}>
-                        <Text style={styles.pickerTitle}>Select Type</Text>
-                        <TouchableOpacity onPress={() => setShowTypePicker(false)}>
-                          <Text style={styles.closeButtonText}>✕</Text>
-                        </TouchableOpacity>
-                      </View>
-                      <ScrollView>
-                        {pluginSchemas.map((schema) => (
-                          <TouchableOpacity
-                            key={schema.type}
-                            style={[
-                              styles.pickerOption,
-                              type === schema.type && styles.pickerOptionActive,
-                            ]}
-                            onPress={() => {
-                              setType(schema.type);
-                              setShowTypePicker(false);
-                            }}
-                          >
-                            <Text
-                              style={[
-                                styles.pickerOptionText,
-                                type === schema.type && styles.pickerOptionTextActive,
-                              ]}
-                            >
-                              {schema.type}
-                            </Text>
-                          </TouchableOpacity>
-                        ))}
-                      </ScrollView>
-                    </Pressable>
-                  </Pressable>
-                </Modal>
-              )}
-            </View>
-          </ScrollView>
+                    <Text style={styles.selectButtonText}>{type || 'Select type'}</Text>
+                    <Text style={styles.selectButtonArrow}>▼</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </ScrollView>
+          </View>
 
+          {/* Type Picker Modal (Nested) */}
+          {showTypePicker && (
+            <Modal
+              visible={showTypePicker}
+              transparent
+              animationType="fade"
+              onRequestClose={() => setShowTypePicker(false)}
+            >
+              <Pressable
+                style={styles.pickerOverlay}
+                onPress={() => setShowTypePicker(false)}
+              >
+                <Pressable style={styles.pickerContainer} onPress={(e) => e.stopPropagation()}>
+                  <View style={styles.pickerHeader}>
+                    <Text style={styles.pickerTitle}>Select Type</Text>
+                    <TouchableOpacity onPress={() => setShowTypePicker(false)}>
+                      <Text style={styles.closeButtonText}>✕</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <ScrollView style={{ maxHeight: 300 }}>
+                    {pluginSchemas.map((schema) => (
+                      <TouchableOpacity
+                        key={schema.type}
+                        style={[
+                          styles.pickerOption,
+                          type === schema.type && styles.pickerOptionActive,
+                        ]}
+                        onPress={() => {
+                          setType(schema.type);
+                          setShowTypePicker(false);
+                        }}
+                      >
+                        <Text
+                          style={[
+                            styles.pickerOptionText,
+                            type === schema.type && styles.pickerOptionTextActive,
+                          ]}
+                        >
+                          {schema.type}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                </Pressable>
+              </Pressable>
+            </Modal>
+          )}
+
+          {/* Footer */}
           <View style={styles.modalFooter}>
             <TouchableOpacity style={styles.cancelButton} onPress={onClose}>
               <Text style={styles.cancelButtonText}>Cancel</Text>
@@ -184,11 +205,14 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#262626',
     width: '100%',
-    maxWidth: 500,
+    maxWidth: 450,
     maxHeight: '90%',
     overflow: 'hidden',
     flexDirection: 'column',
-    height: '80%',
+  },
+  modalContentLandscape: {
+    maxWidth: 600, // Wider for landscape
+    maxHeight: '85%',
   },
   modalHeader: {
     flexDirection: 'row',
@@ -197,6 +221,7 @@ const styles = StyleSheet.create({
     padding: 20,
     borderBottomWidth: 1,
     borderBottomColor: '#262626',
+    backgroundColor: '#171717',
   },
   modalTitle: {
     fontSize: 16,
@@ -221,17 +246,25 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   modalBodyContent: {
-    padding: 20,
-    flex: 1,
+    padding: 24,
+  },
+  formContainer: {
+    flexDirection: 'column',
+    gap: 20,
+  },
+  formContainerLandscape: {
+    flexDirection: 'row', // Side by side inputs
+    gap: 16,
   },
   inputGroup: {
-    gap: 12,
-    marginBottom: 20,
+    flex: 1,
+    gap: 10,
   },
   label: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '700',
-    color: '#E5E5E5',
+    color: '#A3A3A3',
+    textTransform: 'uppercase',
   },
   input: {
     backgroundColor: '#0A0A0A',
@@ -242,7 +275,7 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: '#FFFFFF',
     fontWeight: '600',
-    minHeight: 48,
+    minHeight: 50,
   },
   selectButton: {
     backgroundColor: '#0A0A0A',
@@ -253,7 +286,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    minHeight: 48,
+    minHeight: 50,
   },
   selectButtonText: {
     fontSize: 15,
@@ -287,7 +320,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 20,
+    padding: 16,
     borderBottomWidth: 1,
     borderBottomColor: '#262626',
   },
@@ -302,7 +335,7 @@ const styles = StyleSheet.create({
     borderBottomColor: '#262626',
   },
   pickerOptionActive: {
-    backgroundColor: '#0A0A0A',
+    backgroundColor: '#262626',
   },
   pickerOptionText: {
     fontSize: 15,
@@ -314,16 +347,17 @@ const styles = StyleSheet.create({
   },
   modalFooter: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-end',
     alignItems: 'center',
     padding: 20,
     borderTopWidth: 1,
     borderTopColor: '#262626',
+    gap: 12,
+    backgroundColor: '#171717',
   },
   cancelButton: {
-    paddingHorizontal: 24,
+    paddingHorizontal: 20,
     paddingVertical: 12,
-    borderRadius: 12,
   },
   cancelButtonText: {
     fontSize: 14,
@@ -335,7 +369,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderRadius: 12,
     backgroundColor: '#FFFFFF',
-    minWidth: 120,
+    minWidth: 100,
     alignItems: 'center',
   },
   createButtonDisabled: {
@@ -347,4 +381,3 @@ const styles = StyleSheet.create({
     color: '#000000',
   },
 });
-

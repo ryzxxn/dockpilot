@@ -11,6 +11,9 @@ import {
   Alert,
   ActivityIndicator,
   Pressable,
+  useWindowDimensions,
+  Platform,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { Button, PluginSchema } from '../types';
 import { apiClient } from '../utils/api';
@@ -34,6 +37,9 @@ export const ConfigButtonModal = ({
   schema,
   availableIcons,
 }: ConfigButtonModalProps) => {
+  const { width, height } = useWindowDimensions();
+  const isLandscape = width > height;
+
   const [config, setConfig] = useState<DynamicConfig>({});
   const [label, setLabel] = useState('');
   const [icon, setIcon] = useState<string | null>(null);
@@ -108,272 +114,280 @@ export const ConfigButtonModal = ({
     ]);
   };
 
-  const handleReset = async () => {
-    if (!button) return;
-    Alert.alert('Reset Config', 'Reset configuration to defaults?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Reset',
-        onPress: async () => {
-          try {
-            await apiClient.deleteButtonConfig(button.button_id);
-            loadConfig();
-          } catch {
-            Alert.alert('Error', 'Failed to reset config');
-          }
-        },
-      },
-    ]);
-  };
-
   if (!visible || !button) return null;
+
+  // --- RENDER CONTENT HELPERS ---
+
+  const renderConfigFields = () => (
+    <View style={styles.settingsTab}>
+      {schema.length === 0 && (
+        <View style={styles.noConfigContainer}>
+          <Text style={styles.noConfigText}>No configuration required.</Text>
+        </View>
+      )}
+      {schema.map((field) => {
+        const value = config[field.key] ?? (field.default || '');
+        return (
+          <View key={field.key} style={styles.configField}>
+            <Text style={styles.fieldLabel}>
+              {field.label} {field.required && <Text style={styles.required}>*</Text>}
+            </Text>
+            {field.type === 'enum' ? (
+              <>
+                <TouchableOpacity
+                  style={styles.selectButton}
+                  onPress={() => setOpenPickers({ ...openPickers, [field.key]: true })}
+                >
+                  <Text style={styles.selectButtonText}>{value || 'Select option'}</Text>
+                  <Text style={styles.selectButtonArrow}>▼</Text>
+                </TouchableOpacity>
+
+                {openPickers[field.key] && (
+                  <Modal
+                    visible={openPickers[field.key]}
+                    transparent
+                    animationType="fade"
+                    onRequestClose={() =>
+                      setOpenPickers({ ...openPickers, [field.key]: false })
+                    }
+                  >
+                    <Pressable
+                      style={styles.pickerOverlay}
+                      onPress={() => setOpenPickers({ ...openPickers, [field.key]: false })}
+                    >
+                      <Pressable style={styles.pickerContainer} onPress={(e) => e.stopPropagation()}>
+                        <View style={styles.pickerHeader}>
+                          <Text style={styles.pickerTitle}>{field.label}</Text>
+                          <TouchableOpacity
+                            onPress={() =>
+                              setOpenPickers({ ...openPickers, [field.key]: false })
+                            }
+                          >
+                            <Text style={styles.closeButtonText}>✕</Text>
+                          </TouchableOpacity>
+                        </View>
+                        <ScrollView style={{ maxHeight: 300 }}>
+                          {field.values?.map((v) => (
+                            <TouchableOpacity
+                              key={v}
+                              style={[
+                                styles.pickerOption,
+                                value === v && styles.pickerOptionActive,
+                              ]}
+                              onPress={() => {
+                                setConfig({ ...config, [field.key]: v });
+                                setOpenPickers({ ...openPickers, [field.key]: false });
+                              }}
+                            >
+                              <Text
+                                style={[
+                                  styles.pickerOptionText,
+                                  value === v && styles.pickerOptionTextActive,
+                                ]}
+                              >
+                                {v}
+                              </Text>
+                            </TouchableOpacity>
+                          ))}
+                        </ScrollView>
+                      </Pressable>
+                    </Pressable>
+                  </Modal>
+                )}
+              </>
+            ) : (
+              <TextInput
+                style={styles.input}
+                value={String(value)}
+                onChangeText={(text) =>
+                  setConfig({
+                    ...config,
+                    [field.key]: field.type === 'number' ? Number(text) || 0 : text,
+                  })
+                }
+                placeholder={field.placeholder}
+                placeholderTextColor="#525252"
+                keyboardType={field.type === 'number' ? 'numeric' : 'default'}
+              />
+            )}
+          </View>
+        );
+      })}
+    </View>
+  );
+
+  const renderIconGrid = () => (
+    <View style={styles.iconTab}>
+      <View style={styles.iconGridContainer}>
+        <TouchableOpacity
+          style={[styles.iconOption, icon === null && styles.iconOptionActive, styles.iconOptionNone]}
+          onPress={() => setIcon(null)}
+        >
+          <Text style={styles.iconOptionX}>✕</Text>
+          <Text style={[styles.iconOptionLabel, icon === null && styles.iconOptionLabelActive]}>
+            NONE
+          </Text>
+        </TouchableOpacity>
+
+        {availableIcons.map((iconName) => (
+          <TouchableOpacity
+            key={iconName}
+            style={[styles.iconOption, icon === iconName && styles.iconOptionActive]}
+            onPress={() => setIcon(iconName)}
+          >
+            <Image
+              source={{ uri: apiClient.getIconUrl(iconName) }}
+              style={styles.iconOptionImage}
+              resizeMode="contain"
+            />
+          </TouchableOpacity>
+        ))}
+      </View>
+      {availableIcons.length === 0 && (
+        <Text style={styles.noIconsText}>No icons found in /icons/ folder.</Text>
+      )}
+    </View>
+  );
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={styles.modalOverlay} onPress={onClose}>
-        <Pressable style={styles.modalContent} onPress={(e) => e.stopPropagation()}>
-          {/* Header with Tabs */}
-          <View style={styles.configHeader}>
-            <View style={styles.tabContainer}>
-              <TouchableOpacity
-                style={[styles.tab, activeTab === 'settings' && styles.tabActive]}
-                onPress={() => setActiveTab('settings')}
-              >
-                <Text
-                  style={[styles.tabText, activeTab === 'settings' && styles.tabTextActive]}
-                >
-                  SETTINGS
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.tab, activeTab === 'icon' && styles.tabActive]}
-                onPress={() => setActiveTab('icon')}
-              >
-                <Text style={[styles.tabText, activeTab === 'icon' && styles.tabTextActive]}>
-                  ICON
-                </Text>
-              </TouchableOpacity>
-            </View>
-            <TouchableOpacity onPress={onClose} style={styles.closeButton}>
-              <Text style={styles.closeButtonText}>✕</Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* Icon Preview and Label */}
-          <View style={styles.configHeaderContent}>
-            <View style={styles.iconPreview}>
-              {icon ? (
-                <Image
-                  source={{ uri: apiClient.getIconUrl(icon) }}
-                  style={styles.iconPreviewImage}
-                  resizeMode="contain"
-                />
-              ) : (
-                <Text style={styles.iconPreviewPlaceholder}>⚡</Text>
-              )}
-            </View>
-            <View style={styles.configHeaderText}>
-              <TextInput
-                style={styles.labelInput}
-                value={label}
-                onChangeText={setLabel}
-                placeholder="Button Label"
-                placeholderTextColor="#525252"
-              />
-              <View style={styles.typeBadgeContainer}>
-                <Text style={styles.typeBadge}>{button.type}</Text>
-              </View>
-            </View>
-          </View>
-
-          {/* Content Area */}
-          <ScrollView style={styles.modalBody} contentContainerStyle={styles.modalBodyContent}>
-            {activeTab === 'settings' && (
-              <View style={styles.settingsTab}>
-                {schema.length === 0 && (
-                  <View style={styles.noConfigContainer}>
-                    <Text style={styles.noConfigText}>
-                      No specific configuration required for this plugin.
-                    </Text>
-                  </View>
-                )}
-                {schema.map((field) => {
-                  const value = config[field.key] ?? (field.default || '');
-                  return (
-                    <View key={field.key} style={styles.configField}>
-                      <Text style={styles.fieldLabel}>
-                        {field.label} {field.required && <Text style={styles.required}>*</Text>}
-                      </Text>
-                      {field.type === 'enum' ? (
-                        <>
-                          <TouchableOpacity
-                            style={styles.selectButton}
-                            onPress={() =>
-                              setOpenPickers({ ...openPickers, [field.key]: true })
-                            }
-                          >
-                            <Text style={styles.selectButtonText}>
-                              {value || 'Select option'}
-                            </Text>
-                            <Text style={styles.selectButtonArrow}>▼</Text>
-                          </TouchableOpacity>
-
-                          {openPickers[field.key] && (
-                            <Modal
-                              visible={openPickers[field.key]}
-                              transparent
-                              animationType="fade"
-                              onRequestClose={() =>
-                                setOpenPickers({ ...openPickers, [field.key]: false })
-                              }
-                            >
-                              <Pressable
-                                style={styles.pickerOverlay}
-                                onPress={() =>
-                                  setOpenPickers({ ...openPickers, [field.key]: false })
-                                }
-                              >
-                                <Pressable
-                                  style={styles.pickerContainer}
-                                  onPress={(e) => e.stopPropagation()}
-                                >
-                                  <View style={styles.pickerHeader}>
-                                    <Text style={styles.pickerTitle}>{field.label}</Text>
-                                    <TouchableOpacity
-                                      onPress={() =>
-                                        setOpenPickers({ ...openPickers, [field.key]: false })
-                                      }
-                                    >
-                                      <Text style={styles.closeButtonText}>✕</Text>
-                                    </TouchableOpacity>
-                                  </View>
-                                  <ScrollView>
-                                    {field.values?.map((v) => (
-                                      <TouchableOpacity
-                                        key={v}
-                                        style={[
-                                          styles.pickerOption,
-                                          value === v && styles.pickerOptionActive,
-                                        ]}
-                                        onPress={() => {
-                                          setConfig({ ...config, [field.key]: v });
-                                          setOpenPickers({ ...openPickers, [field.key]: false });
-                                        }}
-                                      >
-                                        <Text
-                                          style={[
-                                            styles.pickerOptionText,
-                                            value === v && styles.pickerOptionTextActive,
-                                          ]}
-                                        >
-                                          {v}
-                                        </Text>
-                                      </TouchableOpacity>
-                                    ))}
-                                  </ScrollView>
-                                </Pressable>
-                              </Pressable>
-                            </Modal>
-                          )}
-                        </>
-                      ) : (
-                        <TextInput
-                          style={styles.input}
-                          value={String(value)}
-                          onChangeText={(text) =>
-                            setConfig({
-                              ...config,
-                              [field.key]: field.type === 'number' ? Number(text) || 0 : text,
-                            })
-                          }
-                          placeholder={field.placeholder}
-                          placeholderTextColor="#525252"
-                          keyboardType={field.type === 'number' ? 'numeric' : 'default'}
-                        />
-                      )}
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={styles.modalOverlay}
+      >
+        <Pressable style={styles.modalOverlay} onPress={onClose}>
+          <Pressable 
+            style={[
+              styles.modalContent, 
+              isLandscape && styles.modalContentLandscape
+            ]} 
+            onPress={(e) => e.stopPropagation()}
+          >
+            {/* 
+                LAYOUT STRATEGY:
+                Portrait: Vertical Stack (Header -> Content -> Footer)
+                Landscape: Split View (Left: Header/Meta/Footer, Right: Scrollable Config)
+            */}
+            
+            {isLandscape ? (
+              <View style={styles.landscapeContainer}>
+                {/* LEFT PANE: Info & Actions */}
+                <View style={styles.landscapeLeftPane}>
+                  {/* Header / Meta */}
+                  <View>
+                    <View style={styles.configHeader}>
+                       <Text style={styles.landscapeTitle}>EDIT BUTTON</Text>
+                       <TouchableOpacity onPress={onClose}><Text style={styles.closeButtonText}>✕</Text></TouchableOpacity>
                     </View>
-                  );
-                })}
-              </View>
-            )}
+                    
+                    <View style={styles.configHeaderContent}>
+                      <View style={styles.iconPreview}>
+                        {icon ? (
+                          <Image
+                            source={{ uri: apiClient.getIconUrl(icon) }}
+                            style={styles.iconPreviewImage}
+                            resizeMode="contain"
+                          />
+                        ) : (
+                          <Text style={styles.iconPreviewPlaceholder}>⚡</Text>
+                        )}
+                      </View>
+                      <View style={styles.configHeaderText}>
+                        <TextInput
+                          style={styles.labelInput}
+                          value={label}
+                          onChangeText={setLabel}
+                          placeholder="Label"
+                          placeholderTextColor="#525252"
+                        />
+                        <View style={styles.typeBadgeContainer}>
+                          <Text style={styles.typeBadge}>{button.type}</Text>
+                        </View>
+                      </View>
+                    </View>
+                  </View>
 
-            {activeTab === 'icon' && (
-              <View style={styles.iconTab}>
-                <ScrollView
-                  contentContainerStyle={styles.iconGridContainer}
-                  showsVerticalScrollIndicator={true}
-                >
-                  {/* None Option */}
-                  <TouchableOpacity
-                    style={[
-                      styles.iconOption,
-                      icon === null && styles.iconOptionActive,
-                      styles.iconOptionNone,
-                    ]}
-                    onPress={() => setIcon(null)}
-                  >
-                    <Text style={styles.iconOptionX}>✕</Text>
-                    <Text
-                      style={[
-                        styles.iconOptionLabel,
-                        icon === null && styles.iconOptionLabelActive,
-                      ]}
-                    >
-                      NONE
-                    </Text>
-                  </TouchableOpacity>
+                  {/* Tabs */}
+                  <View style={styles.tabContainerLandscape}>
+                     <TouchableOpacity style={[styles.tab, activeTab === 'settings' && styles.tabActive]} onPress={() => setActiveTab('settings')}>
+                        <Text style={[styles.tabText, activeTab === 'settings' && styles.tabTextActive]}>SETTINGS</Text>
+                     </TouchableOpacity>
+                     <TouchableOpacity style={[styles.tab, activeTab === 'icon' && styles.tabActive]} onPress={() => setActiveTab('icon')}>
+                        <Text style={[styles.tabText, activeTab === 'icon' && styles.tabTextActive]}>ICON</Text>
+                     </TouchableOpacity>
+                  </View>
 
-                  {/* Icon Grid */}
-                  {availableIcons.map((iconName) => (
-                    <TouchableOpacity
-                      key={iconName}
-                      style={[styles.iconOption, icon === iconName && styles.iconOptionActive]}
-                      onPress={() => setIcon(iconName)}
-                    >
-                      <Image
-                        source={{ uri: apiClient.getIconUrl(iconName) }}
-                        style={styles.iconOptionImage}
-                        resizeMode="contain"
-                      />
+                  {/* Footer Actions */}
+                  <View style={styles.landscapeFooter}>
+                    <TouchableOpacity style={styles.deleteButton} onPress={handleDelete}>
+                      <Text style={styles.deleteButtonText}>🗑️</Text>
                     </TouchableOpacity>
-                  ))}
-                </ScrollView>
-                {availableIcons.length === 0 && (
-                  <Text style={styles.noIconsText}>No icons found in /icons/ folder.</Text>
-                )}
-              </View>
-            )}
-          </ScrollView>
+                    <TouchableOpacity
+                      style={[styles.saveButton, isSaving && styles.saveButtonDisabled]}
+                      onPress={handleSave}
+                      disabled={isSaving}
+                    >
+                      {isSaving ? <ActivityIndicator color="#000" /> : <Text style={styles.saveButtonText}>SAVE</Text>}
+                    </TouchableOpacity>
+                  </View>
+                </View>
 
-          {/* Footer */}
-          <View style={styles.modalFooter}>
-            <View style={styles.footerLeft}>
-              <TouchableOpacity style={styles.deleteButton} onPress={handleDelete}>
-                <Text style={styles.deleteButtonText}>🗑️</Text>
-              </TouchableOpacity>
-              {/* <TouchableOpacity style={styles.resetButton} onPress={handleReset}>
-                <Text style={styles.resetButtonText}>↻</Text>
-              </TouchableOpacity> */}
-            </View>
-            <View style={styles.footerRight}>
-              <TouchableOpacity style={styles.cancelButton} onPress={onClose}>
-                <Text style={styles.cancelButtonText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.saveButton, isSaving && styles.saveButtonDisabled]}
-                onPress={handleSave}
-                disabled={isSaving}
-              >
-                {isSaving ? (
-                  <ActivityIndicator color="#FFFFFF" />
-                ) : (
-                  <Text style={styles.saveButtonText}>Save Changes</Text>
-                )}
-              </TouchableOpacity>
-            </View>
-          </View>
+                {/* RIGHT PANE: Scrollable Content */}
+                <View style={styles.landscapeRightPane}>
+                  <ScrollView contentContainerStyle={styles.modalBodyContent}>
+                    {activeTab === 'settings' ? renderConfigFields() : renderIconGrid()}
+                  </ScrollView>
+                </View>
+              </View>
+            ) : (
+              // PORTRAIT LAYOUT (Original)
+              <>
+                <View style={styles.configHeader}>
+                  <View style={styles.tabContainer}>
+                    <TouchableOpacity style={[styles.tab, activeTab === 'settings' && styles.tabActive]} onPress={() => setActiveTab('settings')}>
+                      <Text style={[styles.tabText, activeTab === 'settings' && styles.tabTextActive]}>SETTINGS</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={[styles.tab, activeTab === 'icon' && styles.tabActive]} onPress={() => setActiveTab('icon')}>
+                      <Text style={[styles.tabText, activeTab === 'icon' && styles.tabTextActive]}>ICON</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <TouchableOpacity onPress={onClose} style={styles.closeButton}>
+                    <Text style={styles.closeButtonText}>✕</Text>
+                  </TouchableOpacity>
+                </View>
+
+                <View style={styles.configHeaderContent}>
+                  <View style={styles.iconPreview}>
+                    {icon ? (
+                      <Image source={{ uri: apiClient.getIconUrl(icon) }} style={styles.iconPreviewImage} resizeMode="contain" />
+                    ) : (
+                      <Text style={styles.iconPreviewPlaceholder}>⚡</Text>
+                    )}
+                  </View>
+                  <View style={styles.configHeaderText}>
+                    <TextInput style={styles.labelInput} value={label} onChangeText={setLabel} placeholder="Button Label" placeholderTextColor="#525252" />
+                    <View style={styles.typeBadgeContainer}><Text style={styles.typeBadge}>{button.type}</Text></View>
+                  </View>
+                </View>
+
+                <ScrollView style={styles.modalBody} contentContainerStyle={styles.modalBodyContent}>
+                  {activeTab === 'settings' ? renderConfigFields() : renderIconGrid()}
+                </ScrollView>
+
+                <View style={styles.modalFooter}>
+                  <TouchableOpacity style={styles.deleteButton} onPress={handleDelete}><Text style={styles.deleteButtonText}>🗑️</Text></TouchableOpacity>
+                  <View style={styles.footerRight}>
+                    <TouchableOpacity style={styles.cancelButton} onPress={onClose}><Text style={styles.cancelButtonText}>Cancel</Text></TouchableOpacity>
+                    <TouchableOpacity style={[styles.saveButton, isSaving && styles.saveButtonDisabled]} onPress={handleSave} disabled={isSaving}>
+                      {isSaving ? <ActivityIndicator color="#000" /> : <Text style={styles.saveButtonText}>Save Changes</Text>}
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </>
+            )}
+          </Pressable>
         </Pressable>
-      </Pressable>
+      </KeyboardAvoidingView>
     </Modal>
   );
 };
@@ -381,10 +395,12 @@ export const ConfigButtonModal = ({
 const styles = StyleSheet.create({
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    backgroundColor: 'rgba(0, 0, 0, 0.85)',
     justifyContent: 'center',
     alignItems: 'center',
     padding: 16,
+    width: '100%',
+    height: '100%',
   },
   modalContent: {
     backgroundColor: '#171717',
@@ -393,11 +409,51 @@ const styles = StyleSheet.create({
     borderColor: '#262626',
     width: '100%',
     maxWidth: 500,
-    maxHeight: '90%',
+    maxHeight: '85%',
     overflow: 'hidden',
     flexDirection: 'column',
-    height: '80%',
   },
+  modalContentLandscape: {
+    maxWidth: 700, // Wider for split view
+    height: '80%',
+    flexDirection: 'row', // Enable split view
+  },
+  
+  // Landscape Split Layout
+  landscapeContainer: {
+    flex: 1,
+    flexDirection: 'row',
+  },
+  landscapeLeftPane: {
+    width: '40%',
+    borderRightWidth: 1,
+    borderRightColor: '#262626',
+    padding: 0,
+    justifyContent: 'space-between',
+    backgroundColor: '#121212',
+  },
+  landscapeRightPane: {
+    width: '60%',
+    backgroundColor: '#171717',
+  },
+  landscapeTitle: {
+      color: 'white', fontWeight: '900', fontSize: 12, letterSpacing: 1
+  },
+  landscapeFooter: {
+      padding: 16,
+      borderTopWidth: 1,
+      borderTopColor: '#262626',
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+  },
+  tabContainerLandscape: {
+      flexDirection: 'row',
+      padding: 16,
+      gap: 8,
+  },
+
+  // Common Headers
   configHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -420,7 +476,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 6,
-    minWidth: 100,
+    flex: 1,
     alignItems: 'center',
   },
   tabActive: {
@@ -506,7 +562,7 @@ const styles = StyleSheet.create({
     padding: 20,
   },
   settingsTab: {
-    gap: 24,
+    gap: 20,
   },
   noConfigContainer: {
     padding: 40,
@@ -523,12 +579,13 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   configField: {
-    gap: 12,
+    gap: 8,
   },
   fieldLabel: {
-    fontSize: 14,
+    fontSize: 12,
     fontWeight: '700',
-    color: '#E5E5E5',
+    color: '#A3A3A3',
+    textTransform: 'uppercase',
   },
   required: {
     color: '#EF4444',
@@ -539,7 +596,7 @@ const styles = StyleSheet.create({
     borderColor: '#262626',
     borderRadius: 12,
     padding: 16,
-    fontSize: 15,
+    fontSize: 14,
     color: '#FFFFFF',
     fontWeight: '600',
     minHeight: 48,
@@ -556,7 +613,7 @@ const styles = StyleSheet.create({
     minHeight: 48,
   },
   selectButtonText: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '600',
     color: '#FFFFFF',
     flex: 1,
@@ -566,6 +623,7 @@ const styles = StyleSheet.create({
     color: '#525252',
     marginLeft: 8,
   },
+  // Pickers
   pickerOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.8)',
@@ -587,7 +645,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 20,
+    padding: 16,
     borderBottomWidth: 1,
     borderBottomColor: '#262626',
   },
@@ -605,13 +663,14 @@ const styles = StyleSheet.create({
     backgroundColor: '#0A0A0A',
   },
   pickerOptionText: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '600',
     color: '#FFFFFF',
   },
   pickerOptionTextActive: {
     color: '#10B981',
   },
+  // Icon Tab
   iconTab: {
     minHeight: 300,
   },
@@ -622,8 +681,8 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   iconOption: {
-    width: 70,
-    height: 70,
+    width: 64,
+    height: 64,
     borderRadius: 12,
     backgroundColor: '#0A0A0A',
     borderWidth: 1,
@@ -646,7 +705,7 @@ const styles = StyleSheet.create({
     color: '#525252',
   },
   iconOptionLabel: {
-    fontSize: 10,
+    fontSize: 9,
     fontWeight: '700',
     color: '#525252',
     textTransform: 'uppercase',
@@ -664,6 +723,7 @@ const styles = StyleSheet.create({
     padding: 40,
     fontSize: 14,
   },
+  // Footer
   modalFooter: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -672,16 +732,12 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: '#262626',
   },
-  footerLeft: {
-    flexDirection: 'row',
-    gap: 12,
-  },
   footerRight: {
     flexDirection: 'row',
     gap: 12,
   },
   cancelButton: {
-    paddingHorizontal: 24,
+    paddingHorizontal: 20,
     paddingVertical: 12,
     borderRadius: 12,
   },
@@ -695,8 +751,9 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderRadius: 12,
     backgroundColor: '#FFFFFF',
-    minWidth: 140,
+    minWidth: 100,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   saveButtonDisabled: {
     opacity: 0.5,
@@ -719,19 +776,4 @@ const styles = StyleSheet.create({
   deleteButtonText: {
     fontSize: 18,
   },
-  resetButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
-    backgroundColor: '#0A0A0A',
-    borderWidth: 1,
-    borderColor: '#262626',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  resetButtonText: {
-    fontSize: 18,
-    color: '#737373',
-  },
 });
-

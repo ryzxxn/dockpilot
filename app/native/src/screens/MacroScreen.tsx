@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -7,12 +7,8 @@ import {
   StatusBar,
   FlatList,
   ActivityIndicator,
-  Alert,
-  RefreshControl,
   useWindowDimensions,
-  Dimensions,
   Animated,
-  PanResponder,
 } from 'react-native';
 import { useServerConnection } from '../context/ServerConnectionContext';
 import { apiClient } from '../utils/api';
@@ -28,78 +24,72 @@ interface MacroScreenProps {
 }
 
 export default function MacroScreen({ onDisconnect }: MacroScreenProps) {
-  const { serverUrl, isConnected, disconnect } = useServerConnection();
+  const { isConnected } = useServerConnection();
   const { width, height } = useWindowDimensions();
-  const isLandscape = width > height;
-  const [showSettings, setShowSettings] = useState(false);
   
-  // Fixed layout: 2 rows × 4 columns = 8 buttons per page
-  const FIXED_ROWS = 2;
-  const FIXED_COLUMNS = 4;
-  const BUTTONS_PER_PAGE = FIXED_ROWS * FIXED_COLUMNS; // 8
-  const FIXED_BUTTON_SIZE = 180; // Fixed button size
-  
-  // Calculate gaps to fit screen for 2x4 layout
-  const calculateGaps = () => {
-    if (!isLandscape) {
-      return { horizontalGap: 8, verticalGap: 8 }; // Default gaps in portrait
-    }
-    
-    const horizontalPadding = 16; // Total padding (8px on each side)
-    const verticalPadding = 16; // Total padding top/bottom
-    
-    // Calculate horizontal gap
-    const totalButtonWidth = FIXED_BUTTON_SIZE * FIXED_COLUMNS;
-    const availableWidthForGaps = width - horizontalPadding - totalButtonWidth;
-    const horizontalGap = Math.max(4, Math.floor(availableWidthForGaps / (FIXED_COLUMNS - 1)));
-    
-    // Calculate vertical gap
-    const totalButtonHeight = FIXED_BUTTON_SIZE * FIXED_ROWS;
-    const availableHeightForGaps = height - verticalPadding - totalButtonHeight;
-    const verticalGap = Math.max(4, Math.floor(availableHeightForGaps / (FIXED_ROWS - 1)));
-    
-    return { horizontalGap, verticalGap };
-  };
+  // --- LAYOUT CONSTANTS ---
+  const GRID_ROWS = 3;
+  const GRID_COLS = 5;
+  const ITEMS_PER_PAGE = GRID_ROWS * GRID_COLS;
+  const GAP = 12; // Gap between buttons
+  const SCREEN_PADDING = 24; // Safe area padding edges
 
-  const { horizontalGap, verticalGap } = calculateGaps();
-  const buttonSize = isLandscape ? FIXED_BUTTON_SIZE : undefined;
+  // --- DYNAMIC SCALING CALCULATION ---
+  const buttonSize = useMemo(() => {
+    // 1. Calculate max width based on 5 columns
+    const totalHorizontalPadding = (SCREEN_PADDING * 2) + ((GRID_COLS - 1) * GAP);
+    const availableWidth = width - totalHorizontalPadding;
+    const maxBtnWidth = Math.floor(availableWidth / GRID_COLS);
+
+    // 2. Calculate max height based on 3 rows
+    const totalVerticalPadding = (SCREEN_PADDING * 2) + ((GRID_ROWS - 1) * GAP);
+    const availableHeight = height - totalVerticalPadding;
+    const maxBtnHeight = Math.floor(availableHeight / GRID_ROWS);
+
+    // 3. Use the smaller dimension to ensure squares fit within the screen boundaries
+    return Math.min(maxBtnWidth, maxBtnHeight);
+  }, [width, height]);
+
+  // Calculate total width of the grid to center it perfectly within the page
+  const gridContentWidth = (buttonSize * GRID_COLS) + ((GRID_COLS - 1) * GAP);
   
-  // Pagination state
+  // --- STATE ---
+  const [showSettings, setShowSettings] = useState(false);
   const [currentPage, setCurrentPage] = useState(0);
   const scrollX = useRef(new Animated.Value(0)).current;
-  
+
+  // Data
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [selectedProfile, setSelectedProfile] = useState<Profile | null>(null);
   const [buttons, setButtons] = useState<Button[]>([]);
   const [pluginSchemas, setPluginSchemas] = useState<PluginSchema[]>([]);
   const [availableIcons, setAvailableIcons] = useState<string[]>([]);
+  
+  // UI State
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [triggeringButton, setTriggeringButton] = useState<string | null>(null);
   const [buttonResults, setButtonResults] = useState<Record<string, TriggerResult>>({});
   
-  // Modal state
+  // Modals
   const [createModalVisible, setCreateModalVisible] = useState(false);
   const [configModalVisible, setConfigModalVisible] = useState(false);
   const [configButton, setConfigButton] = useState<Button | null>(null);
   
-  // Toast state
+  // Toast
   const [toastVisible, setToastVisible] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
   const [toastType, setToastType] = useState<'success' | 'error' | 'info'>('error');
 
+  // --- EFFECTS ---
   useEffect(() => {
-    if (isConnected) {
-      loadData();
-    }
+    if (isConnected) loadData();
   }, [isConnected]);
 
   useEffect(() => {
-    if (selectedProfile) {
-      loadButtons();
-    }
+    if (selectedProfile) loadButtons();
   }, [selectedProfile]);
 
+  // --- API CALLS ---
   const loadData = async () => {
     try {
       setLoading(true);
@@ -109,16 +99,14 @@ export default function MacroScreen({ onDisconnect }: MacroScreenProps) {
         apiClient.getAvailableIcons(),
       ]);
       
-      const profilesData = profilesRes.data;
-      setProfiles(profilesData);
+      setProfiles(profilesRes.data);
       setPluginSchemas(schemasRes.data.plugins || []);
       setAvailableIcons(iconsRes.data.icons || []);
       
-      const defaultProfile = profilesData.find((p: Profile) => p.is_default === 1) || profilesData[0];
+      const defaultProfile = profilesRes.data.find((p: Profile) => p.is_default === 1) || profilesRes.data[0];
       setSelectedProfile(defaultProfile || null);
     } catch (error) {
-      showToast('Failed to load data', 'error');
-      console.error(error);
+      showToast('Failed to load data. Check Connection.', 'error');
     } finally {
       setLoading(false);
     }
@@ -126,13 +114,11 @@ export default function MacroScreen({ onDisconnect }: MacroScreenProps) {
 
   const loadButtons = async () => {
     if (!selectedProfile) return;
-    
     try {
       const res = await apiClient.getButtons(selectedProfile.profile_id);
       setButtons(res.data);
     } catch (error) {
       showToast('Failed to load buttons', 'error');
-      console.error(error);
     }
   };
 
@@ -142,14 +128,11 @@ export default function MacroScreen({ onDisconnect }: MacroScreenProps) {
     setToastVisible(true);
   };
 
-  const onRefresh = async () => {
-    setRefreshing(true);
-    await loadData();
-    setRefreshing(false);
-  };
-
+  // --- ACTIONS ---
   const handleTriggerButton = async (button: Button) => {
     setTriggeringButton(button.button_id);
+    
+    // Clear previous result
     setButtonResults(prev => {
       const updated = { ...prev };
       delete updated[button.button_id];
@@ -158,35 +141,25 @@ export default function MacroScreen({ onDisconnect }: MacroScreenProps) {
 
     try {
       const res = await apiClient.triggerButton(button.button_id);
-      const resultData = res.data.result;
-      const message = resultData.status || 'Success';
-
       setButtonResults(prev => ({
         ...prev,
         [button.button_id]: {
           success: true,
-          message,
+          message: res.data.result.status || 'Success',
           timestamp: Date.now(),
         },
       }));
     } catch (error: any) {
-      const message = error.response?.data?.detail || 'Failed to trigger';
-      
-      // Show toast for errors
-      showToast(message, 'error');
-      
       setButtonResults(prev => ({
         ...prev,
         [button.button_id]: {
           success: false,
-          message,
+          message: error.response?.data?.detail || 'Failed',
           timestamp: Date.now(),
         },
       }));
     } finally {
       setTriggeringButton(null);
-      
-      // Clear result after 3 seconds
       setTimeout(() => {
         setButtonResults(prev => {
           const updated = { ...prev };
@@ -195,85 +168,6 @@ export default function MacroScreen({ onDisconnect }: MacroScreenProps) {
         });
       }, 3000);
     }
-  };
-
-  const handleDisconnect = () => {
-    Alert.alert(
-      'Disconnect',
-      'Are you sure you want to disconnect from the server?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Disconnect',
-          style: 'destructive',
-          onPress: () => {
-            disconnect();
-            onDisconnect();
-          },
-        },
-      ]
-    );
-  };
-
-  // Split buttons into pages (8 buttons per page)
-  const getButtonPages = () => {
-    const pages: (Button | null)[][] = [];
-    
-    for (let i = 0; i < buttons.length; i += BUTTONS_PER_PAGE) {
-      const pageButtons: (Button | null)[] = [...buttons.slice(i, i + BUTTONS_PER_PAGE)];
-      // Fill remaining slots with null placeholders
-      while (pageButtons.length < BUTTONS_PER_PAGE) {
-        pageButtons.push(null);
-      }
-      pages.push(pageButtons);
-    }
-    
-    // If no buttons, show one empty page
-    if (pages.length === 0) {
-      pages.push(Array(BUTTONS_PER_PAGE).fill(null) as (Button | null)[]);
-    }
-    
-    return pages;
-  };
-
-  const buttonPages = getButtonPages();
-  const totalPages = buttonPages.length;
-
-  const renderButton = ({ item }: { item: Button | null }) => {
-    // Create consistent size style for both buttons and placeholders
-    const sizeStyle = buttonSize 
-      ? { 
-          width: buttonSize, 
-          height: buttonSize,
-          flex: 0, // Disable flex when size is set
-        } 
-      : { flex: 1 }; // Use flex in portrait mode
-
-    // Empty placeholder
-    if (!item) {
-      return (
-        <View 
-          style={[
-            styles.emptyButtonSlot,
-            sizeStyle,
-          ]} 
-        />
-      );
-    }
-
-    const isRunning = triggeringButton === item.button_id;
-    const result = buttonResults[item.button_id];
-
-    return (
-      <MacroButton
-        button={item}
-        isRunning={isRunning}
-        result={result ?? null}
-        onPress={handleTriggerButton}
-        onLongPress={handleOpenConfig}
-        size={buttonSize}
-      />
-    );
   };
 
   const handleOpenConfig = (button: Button) => {
@@ -285,184 +179,157 @@ export default function MacroScreen({ onDisconnect }: MacroScreenProps) {
     loadButtons();
   };
 
+  // --- PAGINATION LOGIC ---
+  const getButtonPages = () => {
+    const pages: (Button | null)[][] = [];
+    const totalItems = buttons.length > 0 ? buttons.length : 1;
+    const totalPagesNeeded = Math.ceil(totalItems / ITEMS_PER_PAGE) || 1;
+
+    for (let i = 0; i < totalPagesNeeded; i++) {
+      const start = i * ITEMS_PER_PAGE;
+      const pageSlice = buttons.slice(start, start + ITEMS_PER_PAGE);
+      
+      const fullPage: (Button | null)[] = [...pageSlice];
+      // Pad the page with nulls to maintain grid structure
+      while (fullPage.length < ITEMS_PER_PAGE) {
+        fullPage.push(null);
+      }
+      pages.push(fullPage);
+    }
+    return pages;
+  };
+
+  const buttonPages = getButtonPages();
+
+  // --- RENDER HELPERS ---
+  const renderGridItem = ({ item }: { item: Button | null }) => {
+    // 1. Render Empty Slot
+    if (!item) {
+      return (
+        <View style={[styles.emptySlot, { width: buttonSize, height: buttonSize }]} />
+      );
+    }
+
+    // 2. Render Macro Button
+    return (
+      <MacroButton
+        button={item}
+        isRunning={triggeringButton === item.button_id}
+        result={buttonResults[item.button_id] ?? null}
+        onPress={handleTriggerButton}
+        onLongPress={handleOpenConfig}
+        size={buttonSize}
+      />
+    );
+  };
 
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color="#FFFFFF" />
-        <Text style={styles.loadingText}>Loading...</Text>
       </View>
     );
   }
 
+  if (showSettings) {
+    return <SettingsScreen onBack={() => setShowSettings(false)} onDisconnect={onDisconnect} />;
+  }
+
   return (
     <View style={styles.container}>
-      <StatusBar barStyle="light-content" backgroundColor="#000000" />
+      <StatusBar hidden />
       
-      {/* Toast */}
+      {/* Background */}
+      <View style={styles.backgroundGradient} />
+
       <Toast
         visible={toastVisible}
         message={toastMessage}
         type={toastType}
         onHide={() => setToastVisible(false)}
       />
-      
-      {/* Settings Screen */}
-      {showSettings ? (
-        <SettingsScreen
-          onBack={() => setShowSettings(false)}
-          onDisconnect={onDisconnect}
-        />
-      ) : (
-        <>
-          {/* Header - Hidden in landscape */}
-          {!isLandscape && (
-            <View style={styles.header}>
-              <View>
-                <Text style={styles.title}>DOCKPILOT</Text>
-                <Text style={styles.subtitle}>SYSTEM CONTROLLER V1.1</Text>
-              </View>
-              <TouchableOpacity style={styles.disconnectButton} onPress={() => setShowSettings(true)}>
-                <Text style={styles.disconnectButtonText}>⚙️</Text>
-              </TouchableOpacity>
-            </View>
-          )}
 
-      {/* Profile Selector - Hidden in landscape */}
-      {!isLandscape && profiles.length > 1 && (
-        <View style={styles.profileContainer}>
-          <FlatList
+      {/* Profile Watermark */}
+      <View style={styles.profileWatermark}>
+        <Text style={styles.profileText}>
+            {selectedProfile?.name || 'PROFILE'}
+        </Text>
+      </View>
+
+      {/* Hidden Settings Trigger (Top Right) */}
+      <TouchableOpacity 
+        style={styles.settingsTrigger} 
+        onLongPress={() => setShowSettings(true)}
+        delayLongPress={1500}
+        activeOpacity={0.1}
+      />
+
+      {/* Main Grid View */}
+      <View style={styles.viewPort}>
+        <Animated.ScrollView
             horizontal
-            data={profiles}
-            keyExtractor={(item) => item.profile_id}
-            renderItem={({ item }) => (
-              <TouchableOpacity
-                style={[
-                  styles.profileButton,
-                  selectedProfile?.profile_id === item.profile_id && styles.profileButtonActive,
-                ]}
-                onPress={() => setSelectedProfile(item)}
-              >
-                <Text
-                  style={[
-                    styles.profileButtonText,
-                    selectedProfile?.profile_id === item.profile_id && styles.profileButtonTextActive,
-                  ]}
-                >
-                  {item.name}
-                </Text>
-              </TouchableOpacity>
-            )}
+            pagingEnabled
             showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.profileList}
-          />
+            scrollEventThrottle={16}
+            onScroll={Animated.event(
+                [{ nativeEvent: { contentOffset: { x: scrollX } } }],
+                { useNativeDriver: false }
+            )}
+            onMomentumScrollEnd={(event) => {
+                const page = Math.round(event.nativeEvent.contentOffset.x / width);
+                setCurrentPage(page);
+            }}
+        >
+            {buttonPages.map((pageData, pageIndex) => (
+                <View 
+                    key={pageIndex} 
+                    style={{ 
+                        width: width, 
+                        height: height, 
+                        alignItems: 'center', 
+                        justifyContent: 'center',
+                        padding: SCREEN_PADDING
+                    }}
+                >
+                    {/* Inner Container restricted to precise grid width */}
+                    <View style={{ width: gridContentWidth }}>
+                        <FlatList
+                            data={pageData}
+                            keyExtractor={(item, idx) => item?.button_id || `empty-${pageIndex}-${idx}`}
+                            renderItem={renderGridItem}
+                            numColumns={GRID_COLS}
+                            scrollEnabled={false} // Grid itself doesn't scroll, pages do
+                            columnWrapperStyle={{ gap: GAP, marginBottom: GAP }}
+                        />
+                    </View>
+                </View>
+            ))}
+        </Animated.ScrollView>
+      </View>
+
+      {/* Pagination Indicators */}
+      {buttonPages.length > 1 && (
+        <View style={styles.paginationContainer}>
+            {buttonPages.map((_, i) => (
+                <View 
+                    key={i} 
+                    style={[
+                        styles.paginationDot, 
+                        i === currentPage && styles.paginationDotActive
+                    ]} 
+                />
+            ))}
         </View>
       )}
 
-          {/* Buttons Grid with Pagination */}
-          {isLandscape ? (
-            <>
-              <Animated.ScrollView
-                horizontal
-                pagingEnabled
-                showsHorizontalScrollIndicator={false}
-                scrollEventThrottle={16}
-                onScroll={Animated.event(
-                  [{ nativeEvent: { contentOffset: { x: scrollX } } }],
-                  { useNativeDriver: false }
-                )}
-                onMomentumScrollEnd={(event) => {
-                  const page = Math.round(event.nativeEvent.contentOffset.x / width);
-                  setCurrentPage(page);
-                }}
-                style={styles.pageScrollView}
-              >
-                {buttonPages.map((pageButtons, pageIndex) => (
-                  <View key={pageIndex} style={[styles.pageContainer, { width }]}>
-                    <FlatList
-                      data={pageButtons}
-                      keyExtractor={(item, index) => item?.button_id || `empty-${pageIndex}-${index}`}
-                      renderItem={renderButton}
-                      numColumns={FIXED_COLUMNS}
-                      scrollEnabled={false}
-                      contentContainerStyle={[
-                        styles.buttonsGrid,
-                        styles.buttonsGridLandscape,
-                        {
-                          paddingHorizontal: 8,
-                          paddingTop: 8,
-                          paddingBottom: 8,
-                        },
-                      ]}
-                      columnWrapperStyle={[
-                        styles.buttonsRow,
-                        { gap: horizontalGap, marginBottom: verticalGap },
-                      ]}
-                      ListEmptyComponent={
-                        buttons.length === 0 && pageIndex === 0 ? (
-                          <View style={styles.emptyContainer}>
-                            <Text style={styles.emptyText}>No buttons configured</Text>
-                            <Text style={styles.emptySubtext}>Add buttons from the web interface</Text>
-                          </View>
-                        ) : null
-                      }
-                    />
-                  </View>
-                ))}
-              </Animated.ScrollView>
-              
-              {/* Floating Page Indicators */}
-              {totalPages > 1 && (
-                <View style={styles.pageIndicators}>
-                  {buttonPages.map((_, index) => (
-                    <View
-                      key={index}
-                      style={[
-                        styles.pageIndicator,
-                        currentPage === index && styles.pageIndicatorActive,
-                      ]}
-                    />
-                  ))}
-                </View>
-              )}
-            </>
-          ) : (
-            <>
-              <FlatList
-                data={buttons}
-                keyExtractor={(item) => item.button_id}
-                renderItem={renderButton}
-                numColumns={2}
-                contentContainerStyle={styles.buttonsGrid}
-                columnWrapperStyle={styles.buttonsRow}
-                refreshControl={
-                  <RefreshControl
-                    refreshing={refreshing}
-                    onRefresh={onRefresh}
-                    tintColor="#FFFFFF"
-                    colors={['#FFFFFF']}
-                  />
-                }
-                ListEmptyComponent={
-                  <View style={styles.emptyContainer}>
-                    <Text style={styles.emptyText}>No buttons configured</Text>
-                    <Text style={styles.emptySubtext}>Tap + to create a button</Text>
-                  </View>
-                }
-              />
-              {/* Create Button - Portrait Mode */}
-              <TouchableOpacity
-                style={styles.createButtonPortrait}
-                onPress={() => setCreateModalVisible(true)}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.createButtonText}>+</Text>
-              </TouchableOpacity>
-            </>
-          )}
-
-        </>
-      )}
+      {/* Floating Add Button */}
+      <TouchableOpacity
+        style={styles.fab}
+        onPress={() => setCreateModalVisible(true)}
+        activeOpacity={0.8}
+      >
+        <Text style={styles.fabText}>+</Text>
+      </TouchableOpacity>
 
       {/* Modals */}
       {selectedProfile && (
@@ -474,14 +341,18 @@ export default function MacroScreen({ onDisconnect }: MacroScreenProps) {
             profileId={selectedProfile.profile_id}
             pluginSchemas={pluginSchemas}
           />
-          <ConfigButtonModal
-            visible={configModalVisible}
-            onClose={() => setConfigModalVisible(false)}
-            onSuccess={handleConfigSuccess}
-            button={configButton}
-            schema={pluginSchemas.find((p) => p.type === configButton?.type)?.schema || []}
-            availableIcons={availableIcons}
-          />
+          
+          {/* CRITICAL FIX: Only render config modal when a button is selected */}
+          {configButton && (
+            <ConfigButtonModal
+              visible={configModalVisible}
+              onClose={() => setConfigModalVisible(false)}
+              onSuccess={handleConfigSuccess}
+              button={configButton}
+              schema={pluginSchemas.find((p) => p.type === configButton.type)?.schema || []}
+              availableIcons={availableIcons}
+            />
+          )}
         </>
       )}
     </View>
@@ -493,202 +364,89 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#000000',
   },
+  backgroundGradient: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: '#050505',
+    zIndex: -1,
+  },
   loadingContainer: {
     flex: 1,
     backgroundColor: '#000000',
-    alignItems: 'center',
     justifyContent: 'center',
-  },
-  loadingText: {
-    color: '#FFFFFF',
-    marginTop: 16,
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingTop: 60,
-    paddingBottom: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: '#171717',
   },
-  title: {
-    fontSize: 24,
-    fontWeight: '900',
-    color: '#FFFFFF',
-    letterSpacing: -1,
-  },
-  subtitle: {
-    fontSize: 8,
-    fontWeight: '700',
-    color: '#525252',
-    letterSpacing: 2,
-    marginTop: 2,
-  },
-  disconnectButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    backgroundColor: '#171717',
-    borderWidth: 1,
-    borderColor: '#262626',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  disconnectButtonText: {
-    fontSize: 20,
-  },
-  profileContainer: {
-    paddingVertical: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#171717',
-  },
-  profileList: {
-    paddingHorizontal: 20,
-    gap: 8,
-  },
-  profileButton: {
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 12,
-    backgroundColor: '#171717',
-    borderWidth: 1,
-    borderColor: '#262626',
-    marginRight: 8,
-  },
-  profileButtonActive: {
-    backgroundColor: '#FFFFFF',
-  },
-  profileButtonText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#737373',
-  },
-  profileButtonTextActive: {
-    color: '#000000',
-  },
-  buttonsGrid: {
-    padding: 16,
-  },
-  buttonsGridLandscape: {
-    padding: 8,
-    paddingTop: 8,
-  },
-  buttonsRow: {
-    justifyContent: 'space-between',
-    gap: 8,
-    marginBottom: 8,
-    paddingHorizontal: 0,
-  },
-  emptyContainer: {
+  viewPort: {
     flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 60,
   },
-  emptyText: {
-    fontSize: 16,
-    fontWeight: '700',
+  profileWatermark: {
+    position: 'absolute',
+    top: 24,
+    left: 24,
+    zIndex: 10,
+    opacity: 0.5,
+  },
+  profileText: {
     color: '#525252',
-    marginBottom: 8,
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 2,
+    textTransform: 'uppercase',
   },
-  emptySubtext: {
-    fontSize: 13,
-    color: '#404040',
+  settingsTrigger: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    width: 80,
+    height: 80,
+    zIndex: 100,
   },
-  emptyButtonSlot: {
-    backgroundColor: '#0A0A0A',
+  emptySlot: {
     borderRadius: 24,
+    backgroundColor: 'rgba(23, 23, 23, 0.4)',
     borderWidth: 1,
     borderColor: '#171717',
     borderStyle: 'dashed',
   },
-  landscapeSettingsButton: {
+  paginationContainer: {
     position: 'absolute',
-    top: 20,
-    right: 20,
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: '#171717',
-    borderWidth: 1,
-    borderColor: '#262626',
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 1000,
-  },
-  landscapeSettingsButtonText: {
-    fontSize: 24,
-  },
-  pageScrollView: {
-    flex: 1,
-  },
-  pageContainer: {
-    flex: 1,
-  },
-  pageIndicators: {
-    position: 'absolute',
-    bottom: 20,
+    bottom: 24,
     left: 0,
     right: 0,
     flexDirection: 'row',
     justifyContent: 'center',
-    alignItems: 'center',
     gap: 8,
-    zIndex: 100,
   },
-  pageIndicator: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+  paginationDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
     backgroundColor: '#262626',
   },
-  pageIndicatorActive: {
+  paginationDotActive: {
     backgroundColor: '#FFFFFF',
-    width: 24,
+    width: 18,
   },
-  createButton: {
+  fab: {
     position: 'absolute',
-    bottom: 80,
-    right: 20,
+    bottom: 24,
+    right: 24,
     width: 56,
     height: 56,
     borderRadius: 28,
     backgroundColor: '#FFFFFF',
     alignItems: 'center',
     justifyContent: 'center',
-    zIndex: 100,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
+    shadowColor: '#FFFFFF',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
     elevation: 8,
   },
-  createButtonText: {
+  fabText: {
     fontSize: 32,
-    fontWeight: '300',
     color: '#000000',
-    lineHeight: 32,
-  },
-  createButtonPortrait: {
-    position: 'absolute',
-    bottom: 20,
-    right: 20,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: '#FFFFFF',
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 100,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 8,
+    fontWeight: '300',
+    lineHeight: 34,
+    marginTop: -2,
   },
 });
-

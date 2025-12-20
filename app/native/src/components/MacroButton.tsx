@@ -37,7 +37,7 @@ const MacroButton = ({ button, isRunning, result, onPress, onLongPress, size }: 
       {/* Type Badge */}
       <View style={styles.buttonHeader}>
         <View style={styles.typeBadge}>
-          <Text style={styles.typeBadgeText}>{button.type}</Text>
+          {/* <Text style={styles.typeBadgeText}>{button.type}</Text> */}
         </View>
       </View>
 
@@ -55,9 +55,9 @@ const MacroButton = ({ button, isRunning, result, onPress, onLongPress, size }: 
             <Text style={styles.buttonIconPlaceholderText}>⚡</Text>
           </View>
         )}
-        <Text style={styles.buttonLabel} numberOfLines={2}>
+        {/* <Text style={styles.buttonLabel} numberOfLines={2}>
           {button.label}
-        </Text>
+        </Text> */}
       </View>
 
 
