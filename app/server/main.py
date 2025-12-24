@@ -1,87 +1,97 @@
-from fastapi import FastAPI  # type: ignore
-from fastapi.middleware.cors import CORSMiddleware  # type: ignore
+import sys
+import os
+import socket
+import subprocess
+import ctypes
+from contextlib import asynccontextmanager
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+import uvicorn
 
+# --- Your Module Imports ---
 from utils.database import init_db, ensure_default_profile
 from utils.icons_loader import mount_icons
 from routers import health, profiles, buttons, button_config
 from plugin.loadplugin import load_plugins
-from plugin.registry import registry 
-import sys
-import os
-import socket
-from zeroconf import ServiceInfo, Zeroconf
+from plugin.registry import registry
 
-app = FastAPI(title="DockPilot API")
-
-# --- Helper to access bundled data in PyInstaller ---
-def get_path(rel_path):
+# ==============================
+# Helper: Get True LAN IP
+# ==============================
+def get_local_ip():
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
-        base_path = sys._MEIPASS  # PyInstaller temp folder
-    except AttributeError:
-        base_path = os.path.abspath(".")
-    return os.path.join(base_path, rel_path)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+    except Exception:
+        ip = "127.0.0.1"
+    finally:
+        s.close()
+    return ip
 
-# ✅ Mount Icons (Static Files)
-mount_icons(app)  # Ensure mount_icons uses get_path internally for PyInstaller
+# ==============================
+# Helper: Force Firewall Open for EXE
+# ==============================
+def force_firewall_rule(port):
+    if sys.platform == "win32":
+        rule_name = "DockPilot_EXE_Access"
+        # Get the absolute path of the running EXE
+        exe_path = os.path.abspath(sys.executable)
+        
+        # PowerShell command: Remove old rule if exists, add new rule specifically for THIS exe path
+        cmd = (
+            f'Remove-NetFirewallRule -DisplayName "{rule_name}" -ErrorAction SilentlyContinue; '
+            f'New-NetFirewallRule -DisplayName "{rule_name}" -Direction Inbound -LocalPort {port} '
+            f'-Protocol TCP -Action Allow -Program "{exe_path}" -Profile Any'
+        )
+        
+        try:
+            subprocess.run(["powershell", "-Command", cmd], capture_output=True, shell=True)
+            print(f"🛡️ Firewall: Port {port} opened for {os.path.basename(exe_path)}")
+        except Exception as e:
+            print(f"⚠️ Firewall injection failed: {e}")
 
-# ✅ CORS Configuration
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # In production, replace with allowed origins
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-@app.on_event("startup")
-async def startup():
-    # Initialize DB
+# ==============================
+# Lifespan (Replaces on_event)
+# ==============================
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
     init_db()
-    default_profile = ensure_default_profile()
-    
-    # Load plugins dynamically
+    ensure_default_profile()
     load_plugins()
     
-    print("🚀 DockPilot started")
-    print(f"👤 Default profile: {default_profile['profile_id']}")
-    print("🧩 Loaded button types:", registry.list_types())
+    lan_ip = get_local_ip()
+    print("\n" + "!"*40)
+    print(f"🚀 EXE SERVER ONLINE")
+    print(f"🔗 LAN URL: http://{lan_ip}:9090")
+    print("!"*40 + "\n")
+    yield
+    # Shutdown logic (optional)
 
-# ✅ Routers
+# ==============================
+# App Setup
+# ==============================
+app = FastAPI(title="DockPilot API", lifespan=lifespan)
+
+mount_icons(app)
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
 app.include_router(health.router, prefix="/health", tags=["health"])
 app.include_router(profiles.router, prefix="/profiles", tags=["profiles"])
-app.include_router(button_config.router)  # Must load before buttons
+app.include_router(button_config.router)
 app.include_router(buttons.router, prefix="/buttons", tags=["buttons"])
 
-# --- mDNS broadcasting ---
-def broadcast_mdns(name="dockpilot", port=9090):
-    zeroconf = Zeroconf()
-    # Get local IP address
-    hostname = socket.gethostname()
-    local_ip = socket.gethostbyname(hostname)
-    
-    info = ServiceInfo(
-        "_http._tcp.local.",
-        f"{name}._http._tcp.local.",
-        addresses=[socket.inet_aton(local_ip)],
-        port=port,
-        properties={},
-        server=f"{name}.local."
-    )
-    zeroconf.register_service(info)
-    print(f"🟢 mDNS service registered: {name}.local:{port}")
-    return zeroconf, info
-
-def stop_mdns(zeroconf, info):
-    zeroconf.unregister_service(info)
-    zeroconf.close()
-    print("🛑 mDNS service stopped")
-
-# ✅ ENTRY POINT
 if __name__ == "__main__":
-    import uvicorn
     PORT = 9090
-    zeroconf, info = broadcast_mdns(name="dockpilot", port=PORT)
-    try:
-        uvicorn.run(app, host="0.0.0.0", port=PORT)
-    finally:
-        stop_mdns(zeroconf, info)
+    
+    if sys.platform == "win32":
+        # Force Admin Elevation so we can modify Firewall
+        if not ctypes.windll.shell32.IsUserAnAdmin():
+            print("Requesting Administrator privileges to unlock LAN access...")
+            ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, " ".join(sys.argv), None, 1)
+            sys.exit(0)
+        else:
+            force_firewall_rule(PORT)
+
+    uvicorn.run(app, host="0.0.0.0", port=PORT)
