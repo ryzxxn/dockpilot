@@ -166,3 +166,15 @@ app/server/__pycache__/main.cpython-312.pyc
 app/server/data/dockpilot.db
 app/server/data/dockpilot.db
 app/server/data/dockpilot.db
+app/server/main.spec
+app/server/build/main/Analysis-00.toc
+app/server/build/main/base_library.zip
+app/server/build/main/EXE-00.toc
+app/server/build-server.spec
+app/server/build/main/main.pkg
+app/server/build/main/PKG-00.toc
+app/server/build/main/PYZ-00.pyz
+app/server/build/main/PYZ-00.toc
+app/server/build/main/warn-main.txt
+app/server/build/main/xref-main.html
+app/server/plugin/__pycache__/__init__.cpython-312.pyc
